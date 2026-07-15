@@ -1,0 +1,21 @@
+[project]
+name = "jurisprudencia-ia"
+version = "0.2.0"
+description = "MCP server para busca SEMÂNTICA de jurisprudência via jurisprudenciaia.com.br — 98 tribunais (STF, STJ, TST, TSE, STM, TRFs, todos os TJs incl. TJGO, TRTs, TREs, TCU/TCEs), sem auth. Busca em linguagem natural com reranking; STF/STJ retornam também repetitivos, súmulas, PUIL e IACs relacionados. Inclui busca por semelhança a partir de texto livre e os INFORMATIVOS de STF/STJ/TST com análise editorial (texto, PDF e podcast)."
+authors = [{name = "Leandro Leite", email = "leandrolcruz2@gmail.com"}]
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.0.0",
+    "requests>=2.28.0",
+    "beautifulsoup4>=4.12.0",
+]
+
+[project.scripts]
+jurisprudencia-ia = "jurisprudencia_ia.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/jurisprudencia_ia"]
