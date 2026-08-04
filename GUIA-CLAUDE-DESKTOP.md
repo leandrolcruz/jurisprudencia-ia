@@ -150,5 +150,9 @@ adiciona o `uv` ao PATH só nas janelas novas).
 ## Observações
 - A ferramenta usa uma API pública de terceiro (jurisprudenciaia.com.br), sem
   login. Uso moderado — o serviço é gratuito e mantido por terceiros.
-- Toda vez que abrir, o `uvx` usa a versão em cache; para atualizar quando sair uma
-  versão nova, rode `uvx --from git+https://github.com/leandrolcruz/jurisprudencia-ia --reinstall jurisprudencia-ia` uma vez no terminal (ou apague o cache do uv).
+- **Atualizar para uma versão nova:** o `uvx` guarda a versão em cache. Para
+  puxar a última do GitHub, rode uma vez no terminal
+  `uvx --from git+https://github.com/leandrolcruz/jurisprudencia-ia jurisprudencia-ia`
+  (ele reconstrói a partir do commit mais recente; pode dar Ctrl+C assim que
+  aparecer "Built …"). Se ainda vier a versão antiga, `uv cache prune` limpa o
+  cache. Depois, feche e reabra o Claude Desktop.
