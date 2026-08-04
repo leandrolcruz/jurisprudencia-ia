@@ -209,7 +209,7 @@ def _xml_acordao(item: dict, indice: int, max_chars: int) -> str:
         ("data_julgamento", _fmt_data(item.get("data_julgamento"))),
         ("data_publicacao", _fmt_data(item.get("data_publicacao_extraida"))),
         ("ementa", _corte(item.get("texto_ementa") or "", max_chars)),
-        ("fonte", item.get("link_pdf") or ""),
+        ("link_inteiro_teor", item.get("link_pdf") or item.get("link") or item.get("link_acordao") or ""),
     ]
     linhas = "".join(f"<{k}>{escape(str(v))}</{k}>" for k, v in campos if v)
     return f'<item indice="{indice}">{linhas}</item>'
@@ -223,7 +223,7 @@ def _xml_repetitivo(item: dict, indice: int, max_chars: int) -> str:
         ("ramo_direito", item.get("ramo_direito") or ""),
         ("tese_firmada", _corte(item.get("tese_firmada") or "", max_chars)),
         ("processo_paradigma", item.get("numero_processo_paradigma") or ""),
-        ("fonte", item.get("link") or item.get("link_acordao") or ""),
+        ("link_inteiro_teor", item.get("link") or item.get("link_acordao") or ""),
     ]
     linhas = "".join(f"<{k}>{escape(str(v))}</{k}>" for k, v in campos if v)
     return f'<item indice="{indice}">{linhas}</item>'
@@ -237,7 +237,7 @@ def _xml_sumula(item: dict, indice: int, max_chars: int) -> str:
         ("ramo_direito", item.get("ramo_direito") or ""),
         ("enunciado", _corte(item.get("enunciado") or "", max_chars)),
         ("data_julgamento", _fmt_data(item.get("data_julgamento"))),
-        ("fonte", item.get("link_pdf") or ""),
+        ("link_inteiro_teor", item.get("link_pdf") or item.get("link") or ""),
     ]
     linhas = "".join(f"<{k}>{escape(str(v))}</{k}>" for k, v in campos if v)
     return f'<item indice="{indice}">{linhas}</item>'
@@ -306,8 +306,11 @@ def buscar_jurisprudencia_ia(
             firmada), súmulas, PUIL e IACs relacionados semanticamente.
 
     Returns:
-        XML com <acordaos> (ementa, nº CNJ, relator, órgão, datas, link do
-        inteiro teor) e, quando houver, <repetitivos>, <sumulas>, <puil>, <iacs>.
+        XML com <acordaos> (ementa, nº CNJ, relator, órgão, datas e o link em
+        <link_inteiro_teor>) e, quando houver, <repetitivos>, <sumulas>,
+        <puil>, <iacs>. IMPORTANTE: ao apresentar cada resultado ao usuário,
+        cite SEMPRE o <link_inteiro_teor> correspondente — é a fonte oficial
+        para auditoria e não deve ser omitido no resumo.
     """
     slugs = [_validar_tribunal(s) for s in tribunais.split(",") if s.strip()]
     if not slugs:
@@ -354,7 +357,9 @@ def buscar_similares_ia(
         max_chars_ementa: truncar ementas nesse tamanho (0 = completa).
 
     Returns:
-        XML com <acordaos> semelhantes (ementa, nº CNJ, relator, órgão, link).
+        XML com <acordaos> semelhantes (ementa, nº CNJ, relator, órgão e o link
+        em <link_inteiro_teor>). IMPORTANTE: cite SEMPRE o <link_inteiro_teor>
+        de cada resultado ao apresentá-lo — é a fonte oficial para auditoria.
     """
     slug = _validar_tribunal(tribunal)
     dados = _api_similar(slug, texto, excluir_id)

@@ -1,6 +1,6 @@
 [project]
 name = "jurisprudencia-ia"
-version = "0.2.0"
+version = "0.2.1"
 description = "MCP server para busca SEMÂNTICA de jurisprudência via jurisprudenciaia.com.br — 98 tribunais (STF, STJ, TST, TSE, STM, TRFs, todos os TJs incl. TJGO, TRTs, TREs, TCU/TCEs), sem auth. Busca em linguagem natural com reranking; STF/STJ retornam também repetitivos, súmulas, PUIL e IACs relacionados. Inclui busca por semelhança a partir de texto livre e os INFORMATIVOS de STF/STJ/TST com análise editorial (texto, PDF e podcast)."
 authors = [{name = "Leandro Leite", email = "leandrolcruz2@gmail.com"}]
 requires-python = ">=3.10"
