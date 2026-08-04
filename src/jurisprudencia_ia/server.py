@@ -27,6 +27,14 @@ podcast). Não há API JSON — as páginas são server-rendered:
 - GET /informativos/{trib}/{numero}       (edição + análise editorial)
 - GET /informativos/busca?q=&tribunal=    (busca nos julgados)
 
+Seção RAG + utilidades (v0.3.0, engenharia reversa 04/08/2026):
+- POST /api/chat-jurisprudencia/session   {tribunalSelectionMode, tribunaisPermitidos}
+- POST /api/chat-jurisprudencia           (SSE, protocolo AI SDK) → resposta fundamentada
+- GET  /api/chat-jurisprudencia/registry?chatId=  → precedentes citados
+- POST /api/extrair-temas                 {texto ≥200} → temas pesquisáveis
+- GET  /api/jurisprudencia-link?tribunal=&id=      → link oficial por id
+- GET  /api/tribunais/{slug}/integra/{id} → inteiro teor (só tjmrs/tjmsp/tjrn)
+
 Tools:
 - buscar_jurisprudencia_ia: retorna XML estruturado
 - buscar_similares_ia: busca por semelhança a partir de texto livre (XML)
@@ -35,9 +43,15 @@ Tools:
 - buscar_informativos: busca nos informativos STF/STJ/TST (Markdown)
 - obter_informativo: edição completa com análise editorial (Markdown)
 - listar_informativos: últimas edições de um tribunal (Markdown)
+- perguntar_jurisprudencia_ia: chat RAG — resposta fundamentada + fontes (Markdown)
+- extrair_temas_ia: extrai temas pesquisáveis de um texto (Markdown)
+- resolver_link_ia: resolve o link oficial de um julgado por id
+- obter_inteiro_teor_ia: inteiro teor (texto onde a API expõe; senão, link)
 """
 
+import json
 import re
+import uuid
 from typing import Optional
 from xml.sax.saxutils import escape
 
@@ -196,6 +210,96 @@ def _corte(texto: str, max_chars: int) -> str:
     if max_chars and len(texto) > max_chars:
         return texto[:max_chars].rstrip() + " [...]"
     return texto
+
+
+# ------------------------------------------------------------------ #
+# Chat RAG, extração de temas, resolução de link e inteiro teor       #
+# (v0.3.0 — engenharia reversa 04/08/2026)                            #
+# ------------------------------------------------------------------ #
+
+CHAT_URL = f"{BASE_URL}/api/chat-jurisprudencia"
+# Tribunais com inteiro teor integral via API (/integra); nos demais só há link.
+TRIBUNAIS_INTEGRA = {"tjmrs", "tjmsp", "tjrn"}
+# Marcadores de citação embutidos na resposta do chat: ⟦=J1⟧, ⟦J2⟧...
+_CITE_RE = re.compile(r"⟦=?\s*(J\d+)\s*⟧")
+
+
+def _chat_session(slugs: list, modo: str) -> dict:
+    body = {"tribunalSelectionMode": modo}
+    if modo == "manual":
+        body["tribunaisPermitidos"] = slugs
+    r = requests.post(f"{CHAT_URL}/session", json=body,
+                      headers=DEFAULT_HEADERS, timeout=60)
+    r.raise_for_status()
+    return r.json()
+
+
+def _chat_registry(chat_id: str) -> list:
+    r = requests.get(f"{CHAT_URL}/registry", params={"chatId": chat_id},
+                     headers=DEFAULT_HEADERS, timeout=40)
+    r.raise_for_status()
+    return r.json().get("entries", [])
+
+
+def _chat_perguntar(pergunta: str, slugs: list, modo: str) -> tuple:
+    """Cria sessão, envia a pergunta, consome o stream SSE (protocolo AI SDK)
+    e devolve (texto_resposta, entradas_do_registry). As citações do registry
+    já trazem o precedente completo (título, relator, órgão, ementa, link)."""
+    sess = _chat_session(slugs, modo)
+    msg_id = uuid.uuid4().hex[:12]
+    body = {
+        "messages": [{"id": msg_id, "role": "user",
+                      "parts": [{"type": "text", "text": pergunta}]}],
+        "chatId": sess["chatId"],
+        "signature": sess["signature"],
+        "issuedAt": sess["issuedAt"],
+        "origin": "typed",
+        "originMessageId": msg_id,
+    }
+    r = requests.post(CHAT_URL, json=body, stream=True, timeout=180,
+                      headers={**DEFAULT_HEADERS, "Accept": "text/event-stream"})
+    r.raise_for_status()
+    r.encoding = "utf-8"
+    partes = []
+    for linha in r.iter_lines(decode_unicode=True):
+        if not linha or not linha.startswith("data:"):
+            continue
+        payload = linha[5:].strip()
+        if payload == "[DONE]":
+            break
+        try:
+            ev = json.loads(payload)
+        except Exception:
+            continue
+        if ev.get("type") == "text-delta":
+            partes.append(ev.get("delta", ""))
+    entradas = _chat_registry(sess["chatId"])
+    return "".join(partes), entradas
+
+
+def _api_extrair_temas(texto: str) -> list:
+    r = requests.post(f"{BASE_URL}/api/extrair-temas", json={"texto": texto},
+                      headers=DEFAULT_HEADERS, timeout=60)
+    if r.status_code == 400:
+        raise ValueError("O texto precisa ter ao menos 200 caracteres "
+                         "para a extração de temas.")
+    r.raise_for_status()
+    return r.json().get("temas", [])
+
+
+def _api_resolver_link(tribunal: str, id_: str) -> str:
+    r = requests.get(f"{BASE_URL}/api/jurisprudencia-link",
+                     params={"tribunal": tribunal, "id": str(id_)},
+                     headers=DEFAULT_HEADERS, timeout=40)
+    r.raise_for_status()
+    return r.json().get("link", "") or ""
+
+
+def _api_integra(tribunal: str, id_: str) -> dict:
+    r = requests.get(f"{BASE_URL}/api/tribunais/{tribunal}/integra/{id_}",
+                     headers=DEFAULT_HEADERS, timeout=60)
+    r.raise_for_status()
+    return r.json()
 
 
 def _xml_acordao(item: dict, indice: int, max_chars: int) -> str:
@@ -713,6 +817,166 @@ def listar_informativos(
     if not vistos:
         linhas.append("Nenhuma edição encontrada no índice.")
     return "\n".join(linhas)
+
+
+@mcp.tool()
+def perguntar_jurisprudencia_ia(
+    pergunta: str,
+    tribunais: str = "stj,tjgo",
+    max_chars_ementa: int = 700,
+) -> str:
+    """Pergunta em linguagem natural ao CHAT RAG da Jurisprudência IA.
+
+    Diferente da buscar_jurisprudencia_ia (que devolve uma lista de acórdãos),
+    aqui um assistente do próprio site LÊ os julgados e RESPONDE à sua pergunta
+    de forma fundamentada, citando os precedentes que embasam a resposta. Ideal
+    para "qual o entendimento do STJ sobre X?" ou "há divergência entre as
+    turmas quanto a Y?". A resposta traz marcadores [J1], [J2]... que remetem à
+    seção "Fontes citadas", com título, relator, órgão, ementa e link oficial de
+    cada precedente — tudo auditável.
+
+    Args:
+        pergunta: a questão jurídica em linguagem natural (frase completa).
+        tribunais: slug(s) separados por vírgula (ex.: "stj,tjgo") para restringir
+            a busca; use "auto" para deixar o assistente escolher os tribunais.
+        max_chars_ementa: truncar as ementas das fontes citadas (0 = completa).
+
+    Returns:
+        Markdown com a resposta fundamentada + as fontes citadas (auditoria).
+        IMPORTANTE: preserve os links de cada fonte ao repassar ao usuário.
+    """
+    alvo = tribunais.strip().lower()
+    if alvo in ("", "auto", "todos", "automatico", "automático"):
+        modo, slugs = "auto", []
+    else:
+        modo = "manual"
+        slugs = [_validar_tribunal(s) for s in tribunais.split(",") if s.strip()]
+        if len(slugs) > 7:
+            raise ValueError("Máximo de 7 tribunais por conversa (limite do site).")
+
+    texto, entradas = _chat_perguntar(pergunta, slugs, modo)
+    texto = _CITE_RE.sub(r"[\1]", texto).strip()
+
+    linhas = ["# Resposta — Jurisprudência IA (chat RAG)", "",
+              f"**Pergunta:** {pergunta}",
+              f"**Tribunais:** {'automático' if modo == 'auto' else tribunais}",
+              "", texto]
+
+    if entradas:
+        linhas += ["", "---", "## Fontes citadas (auditoria)"]
+        for d in entradas:
+            ref = d.get("ref", "")
+            trib = (d.get("tribunal") or "").upper()
+            titulo = d.get("titulo") or "(sem título)"
+            prec = d.get("precedente") or {}
+            meta_partes = " — ".join(p for p in [
+                prec.get("relator") or "",
+                prec.get("orgao_julgador") or "",
+                f"j. {_fmt_data(prec.get('data_julgamento'))}" if prec.get("data_julgamento") else "",
+            ] if p)
+            linhas.append(f"\n**[{ref}] {trib} — {titulo}**")
+            if meta_partes:
+                linhas.append(f"_{meta_partes}_")
+            ementa = _corte((prec.get("texto_ementa") or "").strip(), max_chars_ementa)
+            if ementa:
+                linhas.append(f"> {ementa}")
+            link = prec.get("link_pdf") or ""
+            if not link:
+                try:
+                    link = _api_resolver_link(d.get("tribunal"),
+                                              (d.get("meta") or {}).get("id"))
+                except Exception:
+                    link = ""
+            if link:
+                linhas.append(f"[Inteiro teor]({link})")
+    else:
+        linhas += ["", "_(Esta resposta não registrou precedentes no registry.)_"]
+
+    return "\n".join(linhas)
+
+
+@mcp.tool()
+def extrair_temas_ia(texto: str) -> str:
+    """Extrai os TEMAS jurídicos pesquisáveis de um texto livre.
+
+    Cole um texto longo (resumo do caso, trecho de peça, ementa) — MÍNIMO de
+    200 caracteres — e a API devolve os temas jurídicos identificados, cada um
+    com uma sugestão de consulta e os tribunais mais indicados. Útil para
+    transformar um caso concreto em pautas de pesquisa antes de rodar a
+    buscar_jurisprudencia_ia ou a perguntar_jurisprudencia_ia.
+
+    Args:
+        texto: o texto-base (≥ 200 caracteres).
+
+    Returns:
+        Markdown com a lista de temas (tema + tribunais sugeridos).
+    """
+    temas = _api_extrair_temas(texto)
+    if not temas:
+        return "Nenhum tema foi extraído do texto."
+    linhas = ["# Temas extraídos", ""]
+    for t in temas:
+        if isinstance(t, dict):
+            nome = t.get("tema") or t.get("titulo") or t.get("nome") or "(tema)"
+            tribs = ", ".join((t.get("tribunais") or []))
+            linhas.append(f"- **{nome}**" + (f" — sugeridos: {tribs}" if tribs else ""))
+        else:
+            linhas.append(f"- **{t}**")
+    return "\n".join(linhas)
+
+
+@mcp.tool()
+def resolver_link_ia(tribunal: str, id: str) -> str:
+    """Resolve o LINK oficial do inteiro teor de um julgado pelo id interno.
+
+    Útil como fallback quando um resultado da busca veio sem link (acontece com
+    acórdãos recentes de índice incompleto): informe o tribunal e o id_interno
+    do resultado e receba a URL da fonte oficial (SCON/STJ, Projudi/TJGO etc.).
+
+    Args:
+        tribunal: slug do tribunal (ex.: "stj", "tjgo").
+        id: id interno do julgado (campo id_interno da busca).
+
+    Returns:
+        A URL do inteiro teor, ou aviso se indisponível.
+    """
+    slug = _validar_tribunal(tribunal)
+    link = _api_resolver_link(slug, id)
+    return link or "(link não disponível para este julgado)"
+
+
+@mcp.tool()
+def obter_inteiro_teor_ia(tribunal: str, id: str, max_chars: int = 0) -> str:
+    """Obtém o INTEIRO TEOR de um julgado (equivale ao 'Baixar .txt' do site).
+
+    Para tjmrs, tjmsp e tjrn a API entrega o TEXTO INTEGRAL do acórdão; para os
+    demais tribunais (STJ, TJGO, STF etc.) o texto completo não é exposto pela
+    API — nesse caso devolve o link oficial, onde o inteiro teor pode ser lido
+    ou baixado (frequentemente um PDF que exigiria OCR).
+
+    Args:
+        tribunal: slug do tribunal (ex.: "stj", "tjgo", "tjrn").
+        id: id interno do julgado (campo id_interno da busca).
+        max_chars: truncar o texto integral nesse tamanho (0 = completo).
+
+    Returns:
+        O texto integral (tribunais suportados) ou o link oficial.
+    """
+    slug = _validar_tribunal(tribunal)
+    if slug in TRIBUNAIS_INTEGRA:
+        data = _api_integra(slug, id)
+        tipo = str(data.get("type") or "")
+        conteudo = str(data.get("content") or "")
+        if not conteudo:
+            return "Inteiro teor vazio para este julgado."
+        if tipo == "url" or conteudo.startswith("http"):
+            return f"Inteiro teor disponível como documento: {conteudo}"
+        return _corte(conteudo, max_chars) if max_chars else conteudo
+    link = _api_resolver_link(slug, id)
+    if link:
+        return (f"O inteiro teor de {TRIBUNAIS[slug][0]} não é exposto como texto "
+                f"pela API. Fonte oficial (leitura/download): {link}")
+    return "Inteiro teor indisponível como texto e link não resolvido."
 
 
 def main():

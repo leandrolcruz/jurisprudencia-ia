@@ -28,6 +28,11 @@ CAPTCHA, sem cookie. Engenharia reversa em 15/07/2026.
 | `/api/tribunais/{slug}/search` | POST JSON | `{query, from, to, relator}` | 20 resultados, datas ISO `aaaa-mm-dd` |
 | `/api/tribunais/{slug}/similar` | POST JSON | `{texto, excludeId}` | 422 se o tribunal não suportar |
 | `/api/tribunais/{slug}/integra/{id}` | GET | — | só tjmrs/tjmsp/tjrn; dispensável (há `link_pdf`) |
+| `/api/chat-jurisprudencia/session` | POST JSON | `{tribunalSelectionMode, tribunaisPermitidos}` | → `{chatId, signature, issuedAt}` |
+| `/api/chat-jurisprudencia` | POST SSE | `{messages, chatId, signature, issuedAt, origin:"typed", originMessageId}` | stream AI SDK; `text-delta` + `data-registry-update` |
+| `/api/chat-jurisprudencia/registry` | GET | `?chatId=` | precedentes citados (título, relator, ementa, `link_pdf`) |
+| `/api/extrair-temas` | POST JSON | `{texto}` (≥200 chars) | → `{temas:[{tema, query, tribunais}]}` |
+| `/api/jurisprudencia-link` | GET | `?tribunal=&id=` | → `{link}` oficial por id interno |
 | `/informativos/{trib}` | GET HTML | — | índice (~60 edições recentes); trib ∈ stf/stj/tst |
 | `/informativos/{trib}/{numero}` | GET HTML | — | edição + análise editorial + PDF/MP3 |
 | `/informativos/busca` | GET HTML | `?q=&tribunal=` | busca nos julgados dos informativos |
@@ -49,6 +54,10 @@ e `rerank_score`).
 5. `buscar_informativos(consulta, tribunal="", max_resultados)` → Markdown
 6. `obter_informativo(tribunal, numero, incluir_analise, max_julgados)` → Markdown
 7. `listar_informativos(tribunal, max_edicoes)` → Markdown
+8. `perguntar_jurisprudencia_ia(pergunta, tribunais="stj,tjgo", ...)` → **chat RAG**: resposta fundamentada + fontes citadas auditáveis (Markdown)
+9. `extrair_temas_ia(texto)` → temas pesquisáveis a partir de um texto ≥200 chars (Markdown)
+10. `resolver_link_ia(tribunal, id)` → link oficial de um julgado pelo id (fallback p/ resultado sem link)
+11. `obter_inteiro_teor_ia(tribunal, id)` → texto integral (tjmrs/tjmsp/tjrn) ou link oficial (demais)
 
 ## Como escrever a consulta
 
