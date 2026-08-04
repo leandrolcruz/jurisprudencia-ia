@@ -58,9 +58,45 @@ e `rerank_score`).
 
 ## Instalação
 
+Pré-requisitos: [`uv`](https://docs.astral.sh/uv/) instalado e, para rodar
+direto do GitHub, o `git` também. A primeira execução baixa as dependências
+(`mcp`, `requests`, `beautifulsoup4`) sozinha.
+
+### Claude Code
+
+Direto do GitHub (recomendado — sem clonar):
+
+```bash
+claude mcp add --scope user jurisprudencia-ia -- uvx --from git+https://github.com/leandrolcruz/jurisprudencia-ia jurisprudencia-ia
+```
+
+Ou a partir de um clone local:
+
 ```bash
 claude mcp add --scope user jurisprudencia-ia -- uvx --from ~/Documents/plugins/jurisprudencia-ia jurisprudencia-ia
 ```
+
+### Claude Desktop (Windows / macOS)
+
+Passo a passo completo (incluindo instalação do `uv`/`git` e os erros mais
+comuns) em [`GUIA-CLAUDE-DESKTOP.md`](GUIA-CLAUDE-DESKTOP.md). Resumo — editar o
+`claude_desktop_config.json` (Configurações → Desenvolvedor → Editar Config) e
+acrescentar:
+
+```json
+{
+  "mcpServers": {
+    "jurisprudencia-ia": {
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/leandrolcruz/jurisprudencia-ia", "jurisprudencia-ia"]
+    }
+  }
+}
+```
+
+Depois salvar e reiniciar o Claude Desktop. Config:
+`%APPDATA%\Claude\claude_desktop_config.json` (Windows) ou
+`~/Library/Application Support/Claude/claude_desktop_config.json` (macOS).
 
 ## Avisos
 
